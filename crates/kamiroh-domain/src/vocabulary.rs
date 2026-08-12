@@ -54,10 +54,64 @@ pub enum Harness {
     Failed { reason: String },
 }
 
+/// The party's actual answer to a [`Request`] — distinct from [`Ack`], which
+/// is only the delivery receipt (`ARCHITECTURE.md`, decision 4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Response {
+    /// The request this answers.
+    pub id: RequestId,
+    /// Opaque to the vocabulary in v0.
+    pub body: Vec<u8>,
+}
+
+/// One unit of party-level messaging in the `turns` protocol: "here is my
+/// answer to what you asked; here is what I now ask" — with either half
+/// absent only at the exchange's boundaries. The enum encodes that a turn is
+/// never empty (`ARCHITECTURE.md`, decision 17).
+///
+/// An exchange is an alternating sequence of turns: opened by [`Turn::Open`]
+/// (a request, nothing yet to answer), continued by [`Turn::Continue`]
+/// (answer + new request), concluded by [`Turn::Close`] (answer, nothing
+/// further asked). One incoming turn = one atomic party state change = at
+/// most one outgoing turn, emitted only after the state settles.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Turn {
+    /// Opens an exchange: a request with no response half.
+    Open { request: Request },
+    /// Continues an exchange: answers the outstanding request and poses the
+    /// next one.
+    Continue {
+        response: Response,
+        request: Request,
+    },
+    /// Concludes an exchange: answers the outstanding request, asks nothing.
+    Close { response: Response },
+}
+
+impl Turn {
+    /// The response half, if present.
+    pub fn response(&self) -> Option<&Response> {
+        match self {
+            Turn::Open { .. } => None,
+            Turn::Continue { response, .. } | Turn::Close { response } => Some(response),
+        }
+    }
+
+    /// The request half, if present — the new outstanding request after this
+    /// turn.
+    pub fn request(&self) -> Option<&Request> {
+        match self {
+            Turn::Open { request } | Turn::Continue { request, .. } => Some(request),
+            Turn::Close { .. } => None,
+        }
+    }
+}
+
 /// Everything an actor may say. Closed in v0 (`ARCHITECTURE.md`, decision 5).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
     Request(Request),
     Ack(Ack),
     Harness(Harness),
+    Turn(Turn),
 }

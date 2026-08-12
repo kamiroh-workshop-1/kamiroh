@@ -157,6 +157,86 @@ async fn kameo_actors_run_the_harness_conversation() {
 }
 
 #[tokio::test]
+async fn kameo_hosted_party_runs_a_multi_round_turn_exchange() {
+    use kamiroh_app::parties::CountdownParty;
+    use kamiroh_app::phone::Phone;
+    use kamiroh_domain::protocol::TurnProgress;
+    use kamiroh_domain::vocabulary::{Response, Turn};
+
+    let net = MemoryNet::new();
+
+    let app = address("aa", "app");
+    let mut app_inbox = net.register(app.clone()).unwrap();
+    let mut app_list = Allowlist::empty();
+    app_list.admit(endpoint("bb"));
+
+    let runtime = KameoRuntime::new(endpoint("bb"), net.transport(), net.clone());
+    let mut party_list = Allowlist::empty();
+    party_list.admit(endpoint("aa"));
+    runtime
+        .install_party(
+            name("counter"),
+            party_list,
+            Box::new(CountdownParty::new(2)),
+        )
+        .unwrap();
+
+    let mut phone = Phone::converse(app.clone(), address("bb", "counter"), net.transport());
+    phone
+        .open(Request {
+            id: RequestId([1; 16]),
+            body: vec![1],
+        })
+        .await
+        .unwrap();
+
+    // No step() calls: the pump and kameo mailbox drive the far side. We
+    // just answer turns as they arrive until the party closes.
+    let mut acks = 0;
+    let mut rounds = 0;
+    let mut fresh: u8 = 10;
+    loop {
+        let delivery = timeout(Duration::from_secs(5), app_inbox.next())
+            .await
+            .expect("timed out")
+            .expect("inbox closed");
+        match process(&app_list, delivery) {
+            Inbound::AckReceived(_) => acks += 1,
+            Inbound::Turn { turn, .. } => {
+                let progress = phone.on_incoming(&turn).unwrap();
+                match (progress, turn) {
+                    (TurnProgress::Concluded, Turn::Close { .. }) => break,
+                    (
+                        TurnProgress::Continuing,
+                        Turn::Continue {
+                            request: theirs, ..
+                        },
+                    ) => {
+                        rounds += 1;
+                        let reply = Turn::Continue {
+                            response: Response {
+                                id: theirs.id,
+                                body: theirs.body,
+                            },
+                            request: Request {
+                                id: RequestId([fresh; 16]),
+                                body: vec![fresh],
+                            },
+                        };
+                        fresh += 1;
+                        phone.send_turn(reply).await.unwrap();
+                    }
+                    other => panic!("unexpected: {other:?}"),
+                }
+            }
+            other => panic!("unexpected inbound: {other:?}"),
+        }
+    }
+    assert_eq!(rounds, 2);
+    assert_eq!(acks, 3);
+}
+
+#[tokio::test]
 async fn unadmitted_commands_are_dropped_by_kameo_hosts() {
     let net = MemoryNet::new();
     let mut transport = net.transport();

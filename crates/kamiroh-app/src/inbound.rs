@@ -8,7 +8,7 @@
 
 use kamiroh_domain::actor::Address;
 use kamiroh_domain::allowlist::Allowlist;
-use kamiroh_domain::vocabulary::{Ack, Harness, Message, Request};
+use kamiroh_domain::vocabulary::{Ack, Harness, Message, Request, Turn};
 use kamiroh_ports::Delivery;
 
 use crate::admission::{Admission, admit};
@@ -34,6 +34,17 @@ pub enum Inbound {
     /// An admitted `harness` (lifecycle/test) message, for the runtime to
     /// interpret. Privileged — see ARCHITECTURE.md, decision 6.
     Harness { harness: Harness, reply_to: Address },
+    /// An admitted [`Turn`]: hand it to the party behind `for_actor`. When
+    /// the turn poses a request (`Open`/`Continue`), `ack` carries the
+    /// delivery acknowledgment to send on handover — the fast receipt while
+    /// the party thinks (decision 4). A `Close` gets no ack in v0 (its
+    /// receipt is part of the deferred reliability work).
+    Turn {
+        turn: Turn,
+        for_actor: Address,
+        reply_to: Address,
+        ack: Option<Message>,
+    },
 }
 
 /// Process one delivery against the receiving actor's allowlist.
@@ -57,6 +68,15 @@ pub fn process(allowlist: &Allowlist, delivery: Delivery) -> Inbound {
             harness,
             reply_to: from,
         },
+        Message::Turn(turn) => {
+            let ack = turn.request().map(|r| Message::Ack(Ack { id: r.id }));
+            Inbound::Turn {
+                turn,
+                for_actor: to,
+                reply_to: from,
+                ack,
+            }
+        }
     }
 }
 

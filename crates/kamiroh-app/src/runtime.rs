@@ -13,10 +13,12 @@ use std::fmt;
 use kamiroh_domain::actor::{ActorName, Address};
 use kamiroh_domain::allowlist::Allowlist;
 use kamiroh_domain::endpoint::EndpointId;
+use kamiroh_domain::protocol::TurnState;
 use kamiroh_domain::vocabulary::{Harness, Message};
-use kamiroh_ports::{Inbox, Registry, Transport};
+use kamiroh_ports::{DynParty, Inbox, Registry, Transport};
 
 use crate::inbound::{Inbound, process};
+use crate::parties::EchoParty;
 
 /// What kind of party sits behind a local actor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +34,10 @@ struct LocalActor<I> {
     inbox: I,
     allowlist: Allowlist,
     kind: ActorKind,
+    /// The party behind this actor, if one is wired (decision 16).
+    party: Option<Box<dyn DynParty>>,
+    /// Per-conversation turn state, keyed by peer (decision 17).
+    turns: HashMap<Address, TurnState>,
 }
 
 /// The toy runtime for one endpoint.
@@ -64,6 +70,27 @@ impl<T: Transport, R: Registry> LocalRuntime<T, R> {
         allowlist: Allowlist,
         kind: ActorKind,
     ) -> Result<(), RuntimeError> {
+        self.install_inner(name, allowlist, kind, None)
+    }
+
+    /// Install an actor with the party behind it (decision 16): incoming
+    /// turns are handed to `party`, its returned turns sent for it.
+    pub fn install_party(
+        &mut self,
+        name: ActorName,
+        allowlist: Allowlist,
+        party: Box<dyn DynParty>,
+    ) -> Result<(), RuntimeError> {
+        self.install_inner(name, allowlist, ActorKind::Plain, Some(party))
+    }
+
+    fn install_inner(
+        &mut self,
+        name: ActorName,
+        allowlist: Allowlist,
+        kind: ActorKind,
+        party: Option<Box<dyn DynParty>>,
+    ) -> Result<(), RuntimeError> {
         if self.actors.contains_key(&name) {
             return Err(RuntimeError::NameInUse);
         }
@@ -78,6 +105,8 @@ impl<T: Transport, R: Registry> LocalRuntime<T, R> {
                 inbox,
                 allowlist,
                 kind,
+                party,
+                turns: HashMap::new(),
             },
         );
         Ok(())
@@ -118,6 +147,60 @@ impl<T: Transport, R: Registry> LocalRuntime<T, R> {
                     None => Ok(()),
                 }
             }
+            Inbound::Turn {
+                turn,
+                for_actor: _,
+                reply_to,
+                ack,
+            } => {
+                // Validate against this conversation's alternation state;
+                // illegal turns are dropped silently (protocol violation).
+                let actor = self
+                    .actors
+                    .get_mut(name)
+                    .ok_or(RuntimeError::UnknownActor)?;
+                let mut state = actor.turns.get(&reply_to).copied().unwrap_or_default();
+                if state.on_incoming(&turn).is_err() {
+                    return Ok(());
+                }
+                actor.turns.insert(reply_to.clone(), state);
+                // Ack on handover — the fast receipt, before the party thinks.
+                if let Some(ack) = ack {
+                    self.send(&self_address, &reply_to, ack).await?;
+                }
+                // Hand the turn to the party; its state change completes
+                // before its reply exists, let alone is sent.
+                let reply = {
+                    let actor = self
+                        .actors
+                        .get_mut(name)
+                        .ok_or(RuntimeError::UnknownActor)?;
+                    match &mut actor.party {
+                        Some(party) => party.on_turn_boxed(&reply_to, turn).await,
+                        None => None,
+                    }
+                };
+                if let Some(reply_turn) = reply {
+                    let legal = {
+                        let actor = self
+                            .actors
+                            .get_mut(name)
+                            .ok_or(RuntimeError::UnknownActor)?;
+                        let mut state = actor.turns.get(&reply_to).copied().unwrap_or_default();
+                        let legal = state.on_outgoing(&reply_turn).is_ok();
+                        if legal {
+                            actor.turns.insert(reply_to.clone(), state);
+                        }
+                        legal
+                    };
+                    if legal {
+                        return self
+                            .send(&self_address, &reply_to, Message::Turn(reply_turn))
+                            .await;
+                    }
+                }
+                Ok(())
+            }
         }
     }
 
@@ -127,10 +210,11 @@ impl<T: Transport, R: Registry> LocalRuntime<T, R> {
         let reply = match command {
             Harness::Ping => Harness::Pong,
             Harness::Spawn { name } => {
-                // The spawned actor admits the controlling endpoint only.
+                // The spawned actor admits the controlling endpoint only,
+                // and gets an EchoParty behind it — the first real Party.
                 let mut allowlist = Allowlist::empty();
                 allowlist.admit(controller.endpoint.clone());
-                match self.install(name.clone(), allowlist, ActorKind::Plain) {
+                match self.install_party(name.clone(), allowlist, Box::new(EchoParty::new())) {
                     Ok(()) => Harness::Spawned { name },
                     Err(e) => Harness::Failed {
                         reason: e.to_string(),

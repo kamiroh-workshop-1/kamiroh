@@ -48,6 +48,16 @@ ports-and-adapters design the ubiquitous language is the architecture.
   the protocol defines. Request-ack is the degenerate two-message case. A long
   conversation is a series of exchanges, one protocol after another. In v0 a
   conversation runs **one exchange at a time**.
+- **Turn** — one unit of party-level messaging in the `turns` protocol: "here
+  is my answer to what you asked; here is what I now ask." An exchange of
+  turns alternates strictly: opened by a request-only turn, continued by
+  answer+request turns, concluded by an answer-only turn. One incoming turn =
+  one atomic party state change = at most one outgoing turn, emitted only
+  after the state settles.
+- **Party** — the app-implemented brain behind an actor: the trait an
+  embedding application implements to receive turns (pushed by kamiroh).
+- **Phone** — the live handle an app holds on one conversation: opening it is
+  purely local; it sends turns and enforces alternation on both directions.
 - **Vocabulary** — the words themselves: the closed set of message kinds from
   which protocols are built.
 
@@ -101,9 +111,17 @@ adapter concern, not a domain one.
   `Response` (the party's actual answer), so response semantics can arrive later
   without remodeling.
 
+- **Response** — the party's actual answer to a Request, distinct from Ack.
+- **Turn** — `Open { request }` / `Continue { response, request }` /
+  `Close { response }`: the enum encodes that a turn is never empty.
+
 Protocols in v0:
 
 - **request-ack** — the first and simplest protocol: one Request, one Ack.
+- **turns** — party-level conversation in strictly alternating Turns, tracked
+  by the `TurnState` machine on both sides (decision 17). Runtimes ack a
+  turn's request half on handover to the party — the fast receipt while the
+  party thinks; a `Close` gets no ack in v0 (deferred reliability work).
 - **harness** — a minimal lifecycle/test protocol: spawn a named actor, stop it,
   ping it. Its exchanges are command/reply pairs: `Spawn → Spawned`,
   `Stop → Stopped`, `Ping → Pong`, with `Failed` as the error reply to any
@@ -123,11 +141,23 @@ Protocols in v0:
 
 **Ports (`kamiroh-ports`, their own crate):**
 
-- *Driving* — the embedding/agent-facing API: hand a Request to your dedicated actor,
-  be handed inbound messages. This is the surface an app-as-library or an agent
-  harness consumes.
+The app-facing boundary (the "1A boundary") is exactly two surfaces
+(decision 16):
+
+- **`Party`** (driven, push) — the trait the embedding app implements per
+  actor; kamiroh drives it with incoming turns. Its signature is the
+  atomicity contract (decision 17).
+- **`Phone`** (driving handle, in `kamiroh-app`) — how an app opens
+  conversations and sends turns; alternation-enforcing.
+
+The kamiroh↔engine boundary (the "1B boundary") stays internal plumbing —
+`Transport`, `Registry`, `Inbox`, and the runtimes' hosting contract — and
+apps never see or name it:
+
 - *Driven* — `Transport`: open/accept conversations to an Address, send/receive
   vocabulary messages. Defined by the core, implemented by adapters.
+  `Registry`/`Inbox`: local actor binding and the pull surface the runtimes'
+  pumps drain.
 
 Putting the port traits in a dedicated crate means *driven* adapters depend on
 `kamiroh-domain` + `kamiroh-ports` only — never on the application layer — so the
@@ -233,7 +263,27 @@ embedding applications depend on.
     accommodation: these ports exist to be crossed by threads. The former
     `#![allow(async_fn_in_trait)]` "spike scope" shortcut is retired. A
     `?Send`/single-threaded variant is deliberately not provided until a
-    single-threaded embedder exists to justify it.
+    single-threaded embedder exists to justify it. (Full deliberation:
+    `docs/advisories/2026-08-12-kameo-ports-send-*.md`.)
+16. **The app boundary is two surfaces: Party and Phone.** An embedding app
+    implements `Party` (one per actor — the brain behind it, driven by
+    kamiroh, push not pull) and holds `Phone`s (the driving handle: open a
+    conversation locally, send turns). The kamiroh↔engine boundary stays
+    internal plumbing apps never see. Opening a conversation remains
+    handshake-free (decision 11): constructing a Phone is a local act.
+17. **Turns are the unit of party-level messaging; exchanges alternate
+    strictly.** A turn couples "answer to your outstanding request" with
+    "optionally, my next request"; the `Turn` enum (Open/Continue/Close)
+    makes an empty turn unrepresentable. One incoming turn = one atomic
+    party state change (enforced by `Party::on_turn(&mut self, …)` and
+    per-actor mailbox serialization) = at most one outgoing turn, sent only
+    after the handler returns. Strict alternation (the `TurnState` machine,
+    held by both sides and enforced by runtimes and Phones) collapses
+    response correlation: exactly one request is outstanding per exchange, so
+    `RequestId` is audit/timeout material, not disambiguation. The delivery
+    `Ack` stays distinct (decision 4): runtimes ack a turn's request half on
+    handover, before the party thinks. Deferred: acks for `Close` turns,
+    timeouts, disconnect mid-exchange, streaming/partial responses.
 
 ## Deferred
 

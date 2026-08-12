@@ -50,6 +50,52 @@ pub trait Inbox {
     fn next(&mut self) -> impl std::future::Future<Output = Option<Delivery>> + Send;
 }
 
+/// Driven port on the app side of the hexagon: **the party behind an actor**
+/// (`ARCHITECTURE.md`, decision 16). The embedding application implements
+/// this, one per actor; kamiroh drives it — push, not pull.
+///
+/// The signature *is* the atomicity contract (decision 17): one incoming turn
+/// → one atomic state change (guarded by `&mut self` and the runtime's
+/// per-actor serialization) → at most one outgoing turn, emitted by the
+/// runtime only after this method returns, i.e. after the state has settled.
+///
+/// Contract for the return value, enforced by the runtime's `TurnState`:
+/// - Incoming `Open`/`Continue` (a request is posed): return `Some(turn)`
+///   whose response half answers it — `Continue` to keep the exchange going,
+///   `Close` to conclude it.
+/// - Incoming `Close` (nothing asked): return `None`; the exchange is over.
+pub trait Party {
+    fn on_turn(
+        &mut self,
+        from: &Address,
+        turn: kamiroh_domain::vocabulary::Turn,
+    ) -> impl std::future::Future<Output = Option<kamiroh_domain::vocabulary::Turn>> + Send;
+}
+
+/// Object-safe form of [`Party`], for runtimes hosting heterogeneous parties.
+/// Blanket-implemented; implement [`Party`], not this.
+pub trait DynParty: Send {
+    fn on_turn_boxed<'a>(
+        &'a mut self,
+        from: &'a Address,
+        turn: kamiroh_domain::vocabulary::Turn,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Option<kamiroh_domain::vocabulary::Turn>> + Send + 'a>,
+    >;
+}
+
+impl<P: Party + Send> DynParty for P {
+    fn on_turn_boxed<'a>(
+        &'a mut self,
+        from: &'a Address,
+        turn: kamiroh_domain::vocabulary::Turn,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Option<kamiroh_domain::vocabulary::Turn>> + Send + 'a>,
+    > {
+        Box::pin(self.on_turn(from, turn))
+    }
+}
+
 /// Driven port: bind a local actor's [`Address`] so the transport routes
 /// deliveries to it (`ARCHITECTURE.md`, decision 12).
 ///

@@ -35,12 +35,14 @@ use kameo::actor::{ActorRef, Spawn};
 use kameo::message::{Context, Message};
 
 use kamiroh_app::inbound::{Inbound, process};
+use kamiroh_app::parties::EchoParty;
 use kamiroh_app::runtime::{ActorKind, RuntimeError};
 use kamiroh_domain::actor::{ActorName, Address};
 use kamiroh_domain::allowlist::Allowlist;
 use kamiroh_domain::endpoint::EndpointId;
+use kamiroh_domain::protocol::TurnState;
 use kamiroh_domain::vocabulary::{Harness, Message as Vocab};
-use kamiroh_ports::{Inbox, Registry, Transport};
+use kamiroh_ports::{DynParty, Inbox, Registry, Transport};
 
 /// The Kameo-backed runtime for one endpoint. Cheap to clone; clones share
 /// the roster.
@@ -121,6 +123,26 @@ where
         allowlist: Allowlist,
         kind: ActorKind,
     ) -> Result<(), RuntimeError> {
+        self.install_inner(name, allowlist, kind, None)
+    }
+
+    /// Install an actor with the party behind it (decision 16).
+    pub fn install_party(
+        &self,
+        name: ActorName,
+        allowlist: Allowlist,
+        party: Box<dyn DynParty>,
+    ) -> Result<(), RuntimeError> {
+        self.install_inner(name, allowlist, ActorKind::Plain, Some(party))
+    }
+
+    fn install_inner(
+        &self,
+        name: ActorName,
+        allowlist: Allowlist,
+        kind: ActorKind,
+        party: Option<Box<dyn DynParty>>,
+    ) -> Result<(), RuntimeError> {
         let mut roster = self.inner.roster.lock().expect("roster poisoned");
         if roster.contains_key(&name) {
             return Err(RuntimeError::NameInUse);
@@ -140,6 +162,8 @@ where
             kind,
             transport: self.inner.transport.clone(),
             runtime: self.clone(),
+            party,
+            turns: HashMap::new(),
         };
         let actor_ref = Host::spawn(host);
 
@@ -183,6 +207,10 @@ where
     kind: ActorKind,
     transport: T,
     runtime: KameoRuntime<T, R>,
+    /// The party behind this actor, if one is wired (decision 16).
+    party: Option<Box<dyn DynParty>>,
+    /// Per-conversation turn state, keyed by peer (decision 17).
+    turns: HashMap<Address, TurnState>,
 }
 
 impl<T, R> kameo::Actor for Host<T, R>
@@ -238,6 +266,40 @@ where
                     let _ = self.transport.send(&self_address, &reply_to, reply).await;
                 }
             }
+            Inbound::Turn {
+                turn,
+                for_actor: _,
+                reply_to,
+                ack,
+            } => {
+                // Validate against this conversation's alternation state;
+                // illegal turns are dropped silently.
+                let mut state = self.turns.get(&reply_to).copied().unwrap_or_default();
+                if state.on_incoming(&turn).is_err() {
+                    return;
+                }
+                self.turns.insert(reply_to.clone(), state);
+                // Ack on handover — the fast receipt, before the party thinks.
+                if let Some(ack) = ack {
+                    let _ = self.transport.send(&self_address, &reply_to, ack).await;
+                }
+                // The party's state change completes before its reply is sent
+                // (decision 17); kameo's mailbox serializes turns per actor.
+                let reply = match &mut self.party {
+                    Some(party) => party.on_turn_boxed(&reply_to, turn).await,
+                    None => None,
+                };
+                if let Some(reply_turn) = reply {
+                    let mut state = self.turns.get(&reply_to).copied().unwrap_or_default();
+                    if state.on_outgoing(&reply_turn).is_ok() {
+                        self.turns.insert(reply_to.clone(), state);
+                        let _ = self
+                            .transport
+                            .send(&self_address, &reply_to, Vocab::Turn(reply_turn))
+                            .await;
+                    }
+                }
+            }
         }
     }
 }
@@ -254,13 +316,15 @@ where
         let reply = match command {
             Harness::Ping => Harness::Pong,
             Harness::Spawn { name } => {
-                // The spawned actor admits the controlling endpoint only.
+                // The spawned actor admits the controlling endpoint only,
+                // and gets an EchoParty behind it — the first real Party.
                 let mut allowlist = Allowlist::empty();
                 allowlist.admit(controller.endpoint.clone());
-                match self
-                    .runtime
-                    .install(name.clone(), allowlist, ActorKind::Plain)
-                {
+                match self.runtime.install_party(
+                    name.clone(),
+                    allowlist,
+                    Box::new(EchoParty::new()),
+                ) {
                     Ok(()) => Harness::Spawned { name },
                     Err(e) => Harness::Failed {
                         reason: e.to_string(),
