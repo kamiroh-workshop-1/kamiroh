@@ -225,6 +225,15 @@ embedding applications depend on.
     so `cargo vendor` output and `.cargo/config.toml` are committed once heavy
     deps (kameo, tokio, iroh) land. Cost: vendored source in the fork's history.
     Benefit: hermetic offline builds everywhere, cloud included.
+15. **Driven-port futures are `Send`.** `Transport::send` and `Inbox::next`
+    return `impl Future + Send`, stated explicitly in the trait (RPITIT with
+    a bound) rather than via `async fn`. Surfaced by the first multi-threaded
+    consumer (the Kameo runtime, whose engine requires `Send` handler
+    futures) — but adopted as a fact about the system, not a kameo
+    accommodation: these ports exist to be crossed by threads. The former
+    `#![allow(async_fn_in_trait)]` "spike scope" shortcut is retired. A
+    `?Send`/single-threaded variant is deliberately not provided until a
+    single-threaded embedder exists to justify it.
 
 ## Deferred
 

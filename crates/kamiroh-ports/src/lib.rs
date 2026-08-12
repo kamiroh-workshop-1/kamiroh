@@ -5,7 +5,6 @@
 //! and agent harnesses. Adapters depend on `kamiroh-domain` + this crate only —
 //! never on the application layer — so the hexagon's dependency arrows are
 //! compiler-enforced.
-#![allow(async_fn_in_trait)] // spike scope: single-crate consumers, no dyn use yet
 
 use kamiroh_domain::actor::Address;
 use kamiroh_domain::vocabulary::Message;
@@ -30,19 +29,25 @@ pub trait Transport {
 
     /// Open (or reuse) a conversation with the actor at `to` and send
     /// `message` as `from`.
-    async fn send(
+    ///
+    /// Implementations' futures must be `Send`: these ports are crossed by
+    /// multi-threaded runtimes by design (ARCHITECTURE.md, decision 15).
+    fn send(
         &mut self,
         from: &Address,
         to: &Address,
         message: Message,
-    ) -> Result<(), Self::Error>;
+    ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send;
 }
 
 /// Driving port: the inbound surface handed to an embedding application or an
 /// agent's harness — messages arriving for its dedicated actor.
 pub trait Inbox {
     /// The next delivery, or `None` when the conversation source is closed.
-    async fn next(&mut self) -> Option<Delivery>;
+    ///
+    /// Implementations' futures must be `Send`: these ports are crossed by
+    /// multi-threaded runtimes by design (ARCHITECTURE.md, decision 15).
+    fn next(&mut self) -> impl std::future::Future<Output = Option<Delivery>> + Send;
 }
 
 /// Driven port: bind a local actor's [`Address`] so the transport routes
