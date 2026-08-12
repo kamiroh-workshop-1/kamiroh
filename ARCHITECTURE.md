@@ -26,6 +26,31 @@ boundaries enforce the **ports-and-adapters** (hexagonal) structure. Dependencie
 inward only; the domain compiles with no knowledge of Kameo, Iroh, or serialization
 formats.
 
+## Glossary — the layering of terms
+
+From the wire up. Fixing these words early is deliberate: in a
+ports-and-adapters design the ubiquitous language is the architecture.
+
+- **Connection** — infrastructure, endpoint↔endpoint. The Iroh QUIC pipe (or
+  nothing at all, in the memory adapter). Owned entirely by the transport
+  adapter: reconnects, multiplexing, lifetimes. The domain never says this
+  word.
+- **Conversation** — domain, actor↔actor. The ongoing relationship between two
+  Addresses, long- or short-lived. It *spans* connections: if the wire drops
+  and returns, it is the same conversation. Admission guards it delivery by
+  delivery. A conversation begins implicitly with its first admitted delivery —
+  there is no opening handshake in v0.
+- **Protocol** — the rulebook, not an instance: a named legal sequence of
+  vocabulary messages (request-ack, harness), including what opens an exchange
+  and what completes one. Reusable across any conversation.
+- **Exchange** — one complete run of a protocol within a conversation, from its
+  opening message to the protocol's terminal state — however many round trips
+  the protocol defines. Request-ack is the degenerate two-message case. A long
+  conversation is a series of exchanges, one protocol after another. In v0 a
+  conversation runs **one exchange at a time**.
+- **Vocabulary** — the words themselves: the closed set of message kinds from
+  which protocols are built.
+
 ## Domain model
 
 The domain crate holds:
@@ -40,7 +65,9 @@ The domain crate holds:
 - **Actor** — the domain concept of a named communicating party at an endpoint
   (distinct from Kameo's actor type, which implements it in the runtime adapter).
 - **Allowlist** — per-actor inbound policy; see Trust model.
-- **Conversation** — an ongoing exchange between two actors, long- or short-lived.
+- **Conversation** — the ongoing actor↔actor relationship (see Glossary), with
+  app-layer state tracking the current exchange.
+- **Exchange** — one run of a protocol within a conversation (see Glossary).
 - **Vocabulary** (module) — the constrained set of message kinds actors may exchange.
   Agnostic to the kind of agent (or non-agent) behind either end.
 - **Protocol** — a named, legal sequence of vocabulary messages between two parties,
@@ -77,12 +104,14 @@ adapter concern, not a domain one.
 Protocols in v0:
 
 - **request-ack** — the first and simplest protocol: one Request, one Ack.
-- **harness** — a minimal lifecycle/test protocol: spawn a named actor (backed by a
-  trivial echo-style agent), stop it, ping it. It exists so integration tests can
-  orchestrate both ends of a real Iroh conversation using the system's own machinery —
-  and it doubles as proof that the protocol abstraction generalizes beyond
-  request-ack. Admitting an endpoint to `harness` is a privileged grant; the full
-  agent-control vocabulary is deliberately deferred.
+- **harness** — a minimal lifecycle/test protocol: spawn a named actor, stop it,
+  ping it. Its exchanges are command/reply pairs: `Spawn → Spawned`,
+  `Stop → Stopped`, `Ping → Pong`, with `Failed` as the error reply to any
+  command. It exists so integration tests can orchestrate both ends of a real
+  Iroh conversation using the system's own machinery — and it doubles as proof
+  that the protocol abstraction generalizes beyond request-ack. Admitting an
+  endpoint to `harness` is a privileged grant; the full agent-control
+  vocabulary is deliberately deferred.
 
 ## Hexagon
 
@@ -164,6 +193,21 @@ embedding applications depend on.
    other spike-0 design is imported). It lets adapters compile against domain +
    ports without seeing the application layer, and makes the adapter roster legible
    at a glance.
+9. **"Exchange" is a first-class term.** One complete run of a protocol within a
+   conversation, spanning as many round trips as the protocol defines. It names
+   where protocol state lives: the app layer tracks, per conversation, the
+   current exchange and its progress.
+10. **One exchange at a time per conversation (v0).** Strictly sequential;
+    interleaved concurrent exchanges drag in correlation machinery that belongs
+    with the deferred response-semantics work.
+11. **No opening handshake (v0).** Admission is checked per delivery, so a
+    handshake adds no security; a conversation begins implicitly with its first
+    admitted delivery. A hello/capability protocol can slot in later as just
+    another protocol if wanted.
+12. **Local actor binding is a port.** The runtime asks the transport to bind an
+    Address and receives that actor's Inbox; dropping the Inbox unbinds. The
+    memory net implements it as registration; the Iroh adapter will implement it
+    as routing inside the endpoint.
 
 ## Deferred
 

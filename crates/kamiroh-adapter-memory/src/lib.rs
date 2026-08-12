@@ -24,7 +24,7 @@ use std::task::{Context, Poll, Waker};
 
 use kamiroh_domain::actor::Address;
 use kamiroh_domain::vocabulary::Message;
-use kamiroh_ports::{Delivery, Inbox, Transport};
+use kamiroh_ports::{Delivery, Inbox, Registry, Transport};
 
 pub mod testing;
 
@@ -71,6 +71,15 @@ impl MemoryNet {
         MemoryTransport {
             shared: Arc::clone(&self.shared),
         }
+    }
+}
+
+impl Registry for MemoryNet {
+    type Inbox = MemoryInbox;
+    type Error = RegisterError;
+
+    fn bind(&mut self, address: &Address) -> Result<Self::Inbox, Self::Error> {
+        self.register(address.clone())
     }
 }
 

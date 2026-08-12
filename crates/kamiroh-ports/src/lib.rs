@@ -44,3 +44,16 @@ pub trait Inbox {
     /// The next delivery, or `None` when the conversation source is closed.
     async fn next(&mut self) -> Option<Delivery>;
 }
+
+/// Driven port: bind a local actor's [`Address`] so the transport routes
+/// deliveries to it (`ARCHITECTURE.md`, decision 12).
+///
+/// Dropping the returned [`Inbox`] unbinds the address. The memory net
+/// implements binding as registration; the Iroh adapter will implement it as
+/// routing inside the endpoint.
+pub trait Registry {
+    type Inbox: Inbox;
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    fn bind(&mut self, address: &Address) -> Result<Self::Inbox, Self::Error>;
+}

@@ -34,18 +34,24 @@ pub struct Ack {
 /// conversation using the system's own machinery. Admitting an endpoint to
 /// this protocol is a privileged grant; the general agent-control vocabulary
 /// is deliberately deferred (`ARCHITECTURE.md`, decision 6).
+/// Its exchanges are command/reply pairs: `Spawn → Spawned`, `Stop → Stopped`,
+/// `Ping → Pong`, with [`Harness::Failed`] as the error reply to any command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Harness {
-    /// Spawn a named actor backed by a trivial echo-style agent.
-    Spawn {
-        name: ActorName,
-    },
-    /// Stop a previously spawned actor.
-    Stop {
-        name: ActorName,
-    },
+    /// Command: spawn a named actor at the receiving endpoint.
+    Spawn { name: ActorName },
+    /// Reply: the named actor was spawned.
+    Spawned { name: ActorName },
+    /// Command: stop a previously spawned actor.
+    Stop { name: ActorName },
+    /// Reply: the named actor was stopped.
+    Stopped { name: ActorName },
+    /// Command: liveness probe.
     Ping,
+    /// Reply to [`Harness::Ping`].
     Pong,
+    /// Reply: the command could not be carried out.
+    Failed { reason: String },
 }
 
 /// Everything an actor may say. Closed in v0 (`ARCHITECTURE.md`, decision 5).
