@@ -9,3 +9,12 @@ description = "kamiroh runtime adapter: domain actors animated as Kameo actors"
 [dependencies]
 kamiroh-domain.workspace = true
 kamiroh-ports.workspace = true
+kamiroh-app.workspace = true
+# Version assumptions — first local build pass: bump to latest, fix API drift
+# per the notes at the top of src/lib.rs.
+kameo = "0.17"
+tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
+
+[dev-dependencies]
+kamiroh-adapter-memory.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

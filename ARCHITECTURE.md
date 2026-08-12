@@ -129,18 +129,25 @@ Protocols in v0:
 - *Driven* — `Transport`: open/accept conversations to an Address, send/receive
   vocabulary messages. Defined by the core, implemented by adapters.
 
-Putting the port traits in a dedicated crate means adapters depend on
+Putting the port traits in a dedicated crate means *driven* adapters depend on
 `kamiroh-domain` + `kamiroh-ports` only — never on the application layer — so the
 hexagon's dependency arrows are enforced by the compiler, not convention.
 
 **Adapters (outside, named `kamiroh-adapter-*`):**
 
-- `kamiroh-adapter-iroh` — implements `Transport` on Iroh connections; owns
-  endpoint setup, connection lifetimes (short- or long-lived), and the wire codec.
-- `kamiroh-adapter-kameo` — animates domain Actors as Kameo actors: mailboxes,
-  supervision, the dedicated-actor-per-agent pattern.
-- `kamiroh-adapter-memory` — an in-process `Transport` for tests: exercises the
-  core with no network involved.
+Adapters come in two kinds, and the dependency rule differs:
+
+- *Driven* adapters are called **by** the core through ports and stay app-blind:
+  - `kamiroh-adapter-iroh` — implements `Transport`/`Registry` on Iroh
+    connections; owns endpoint setup, connection lifetimes (short- or
+    long-lived), and the wire codec.
+  - `kamiroh-adapter-memory` — an in-process `Transport`/`Registry` for tests:
+    exercises the core with no network involved.
+- *Driving* adapters call **into** the application — like a web framework
+  hosting handlers — and so legitimately depend on `kamiroh-app`:
+  - `kamiroh-adapter-kameo` — animates domain Actors as Kameo actors:
+    mailboxes, supervision, the dedicated-actor-per-agent pattern, hosting the
+    app layer's inbound processing and harness execution.
 - Agents themselves live **outside** the hexagon, on the driving side, behind their
   dedicated actors.
 
@@ -208,6 +215,16 @@ embedding applications depend on.
     Address and receives that actor's Inbox; dropping the Inbox unbinds. The
     memory net implements it as registration; the Iroh adapter will implement it
     as routing inside the endpoint.
+13. **Driving adapters may depend on the app layer; driven adapters may not.**
+    Refines decision 8, which was written with driven adapters in mind. The
+    Kameo runtime is a driving adapter — its whole job is hosting application
+    behavior (inbound processing, harness execution) inside real actors — so it
+    depends on `kamiroh-app`, exactly as a web framework depends on the handlers
+    it hosts. Transport adapters remain app-blind.
+14. **Dependencies are vendored.** The cloud workspace cannot reach crates.io,
+    so `cargo vendor` output and `.cargo/config.toml` are committed once heavy
+    deps (kameo, tokio, iroh) land. Cost: vendored source in the fork's history.
+    Benefit: hermetic offline builds everywhere, cloud included.
 
 ## Deferred
 
