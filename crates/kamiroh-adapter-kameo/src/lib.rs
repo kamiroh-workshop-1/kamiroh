@@ -31,7 +31,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use kameo::actor::ActorRef;
+use kameo::actor::{ActorRef, Spawn};
 use kameo::message::{Context, Message};
 
 use kamiroh_app::inbound::{Inbound, process};
@@ -48,7 +48,7 @@ use kamiroh_ports::{Inbox, Registry, Transport};
 /// Must be used inside a tokio runtime (pump tasks are `tokio::spawn`ed).
 pub struct KameoRuntime<T, R>
 where
-    T: Transport + Clone + Send + 'static,
+    T: Transport + Clone + Send + Sync + 'static,
     R: Registry + Send + 'static,
     R::Inbox: Send + 'static,
 {
@@ -57,7 +57,7 @@ where
 
 impl<T, R> Clone for KameoRuntime<T, R>
 where
-    T: Transport + Clone + Send + 'static,
+    T: Transport + Clone + Send + Sync + 'static,
     R: Registry + Send + 'static,
     R::Inbox: Send + 'static,
 {
@@ -70,7 +70,7 @@ where
 
 struct Inner<T, R>
 where
-    T: Transport + Clone + Send + 'static,
+    T: Transport + Clone + Send + Sync + 'static,
     R: Registry + Send + 'static,
     R::Inbox: Send + 'static,
 {
@@ -83,7 +83,7 @@ where
 
 struct Entry<T, R>
 where
-    T: Transport + Clone + Send + 'static,
+    T: Transport + Clone + Send + Sync + 'static,
     R: Registry + Send + 'static,
     R::Inbox: Send + 'static,
 {
@@ -93,7 +93,7 @@ where
 
 impl<T, R> KameoRuntime<T, R>
 where
-    T: Transport + Clone + Send + 'static,
+    T: Transport + Clone + Send + Sync + 'static,
     R: Registry + Send + 'static,
     R::Inbox: Send + 'static,
 {
@@ -141,7 +141,7 @@ where
             transport: self.inner.transport.clone(),
             runtime: self.clone(),
         };
-        let actor_ref = kameo::spawn(host);
+        let actor_ref = Host::spawn(host);
 
         let pump_ref = actor_ref.clone();
         let pump = tokio::spawn(async move {
@@ -174,7 +174,7 @@ where
 /// The Kameo actor hosting one domain actor's behavior.
 struct Host<T, R>
 where
-    T: Transport + Clone + Send + 'static,
+    T: Transport + Clone + Send + Sync + 'static,
     R: Registry + Send + 'static,
     R::Inbox: Send + 'static,
 {
@@ -187,7 +187,7 @@ where
 
 impl<T, R> kameo::Actor for Host<T, R>
 where
-    T: Transport + Clone + Send + 'static,
+    T: Transport + Clone + Send + Sync + 'static,
     R: Registry + Send + 'static,
     R::Inbox: Send + 'static,
 {
@@ -205,7 +205,7 @@ struct Deliver(kamiroh_ports::Delivery);
 
 impl<T, R> Message<Deliver> for Host<T, R>
 where
-    T: Transport + Clone + Send + 'static,
+    T: Transport + Clone + Send + Sync + 'static,
     R: Registry + Send + 'static,
     R::Inbox: Send + 'static,
 {
@@ -244,7 +244,7 @@ where
 
 impl<T, R> Host<T, R>
 where
-    T: Transport + Clone + Send + 'static,
+    T: Transport + Clone + Send + Sync + 'static,
     R: Registry + Send + 'static,
     R::Inbox: Send + 'static,
 {
