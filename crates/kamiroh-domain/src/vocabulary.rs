@@ -37,9 +37,13 @@ pub struct Ack {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Harness {
     /// Spawn a named actor backed by a trivial echo-style agent.
-    Spawn { name: ActorName },
+    Spawn {
+        name: ActorName,
+    },
     /// Stop a previously spawned actor.
-    Stop { name: ActorName },
+    Stop {
+        name: ActorName,
+    },
     Ping,
     Pong,
 }

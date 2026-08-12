@@ -30,8 +30,12 @@ pub trait Transport {
 
     /// Open (or reuse) a conversation with the actor at `to` and send
     /// `message` as `from`.
-    async fn send(&mut self, from: &Address, to: &Address, message: Message)
-    -> Result<(), Self::Error>;
+    async fn send(
+        &mut self,
+        from: &Address,
+        to: &Address,
+        message: Message,
+    ) -> Result<(), Self::Error>;
 }
 
 /// Driving port: the inbound surface handed to an embedding application or an
