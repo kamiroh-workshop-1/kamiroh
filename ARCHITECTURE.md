@@ -314,6 +314,21 @@ embedding applications depend on.
     staging and staging→main, ancestry-preserving merges remain mandatory.
     (Full guide: `docs/VENDORING.md`.)
 
+21. **Internet-facing operation uses n0's public infrastructure; hermetic
+    stays the default.** `NetProfile::Hermetic` (relay-less, lookup-less,
+    static peer book) remains what tests and closed deployments get, and is
+    the default. `NetProfile::N0` (`presets::N0`) turns on n0's relay fleet
+    and address publishing/lookup: peers dial by endpoint id alone, and NAT
+    traversal — hole-punching with relay fallback — is Iroh's job, exactly
+    as designed. Consequences owned: an N0 endpoint publishes a signed
+    address record to n0's public lookup service, and internet operation
+    depends on n0's infrastructure (self-hosted relays deferred until
+    wanted). The relay-less apparatus (fixed-port binding, leased
+    port-forwards via scripts/internet-check-serve.sh) remains in-tree as
+    the documented fallback for single-NAT setups an operator controls —
+    and as the boundary marker of what relay-less operation cannot reach:
+    multi-NAT and CGNAT'd hosts, which need N0.
+
 ## Deferred
 
 - Response semantics (the subtle part, saved for last — see decision 4).

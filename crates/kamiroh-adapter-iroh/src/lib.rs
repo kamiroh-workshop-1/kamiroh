@@ -114,37 +114,65 @@ impl Drop for AbortOnDrop {
     }
 }
 
+/// How an endpoint meets the network (`ARCHITECTURE.md`, decision 21).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NetProfile {
+    /// Relay-less and lookup-less: static peer book only
+    /// (`presets::Minimal` + `RelayMode::Disabled`). The default — tests,
+    /// closed deployments, anything hermetic.
+    #[default]
+    Hermetic,
+    /// n0's public infrastructure (`presets::N0`): relay fleet for
+    /// rendezvous/fallback, address publishing + lookup so peers dial by
+    /// endpoint id alone. NATs — however many layers — are Iroh's problem,
+    /// not the operator's.
+    N0,
+}
+
 impl IrohNet {
-    /// Bind an endpoint from domain [`Secret`] key material (32 bytes) and
-    /// start the accept loop. Relays and discovery are disabled: dialability
-    /// comes from the peer book (decision 19); production relay policy is
-    /// deferred.
+    /// Bind a [`NetProfile::Hermetic`] endpoint from domain [`Secret`] key
+    /// material (32 bytes) and start the accept loop.
     pub async fn bind(secret: &Secret) -> Result<Self, IrohNetError> {
-        Self::bind_on(secret, None).await
+        Self::bind_inner(secret, NetProfile::Hermetic, None).await
     }
 
     /// Like [`IrohNet::bind`], but listening on a fixed UDP port — for
-    /// endpoints that must be dialable at a pre-arranged address (a
-    /// port-forwarded home router, a container with a published port).
-    /// `port` 0 behaves like [`IrohNet::bind`] (ephemeral).
+    /// relay-less endpoints that must be dialable at a pre-arranged address
+    /// (a port-forwarded router, a container with a published port). Under
+    /// [`NetProfile::N0`] a fixed port is unnecessary: dial by id instead.
     pub async fn bind_on(secret: &Secret, port: Option<u16>) -> Result<Self, IrohNetError> {
+        Self::bind_inner(secret, NetProfile::Hermetic, port).await
+    }
+
+    /// Bind with an explicit [`NetProfile`].
+    pub async fn bind_with(secret: &Secret, profile: NetProfile) -> Result<Self, IrohNetError> {
+        Self::bind_inner(secret, profile, None).await
+    }
+
+    async fn bind_inner(
+        secret: &Secret,
+        profile: NetProfile,
+        port: Option<u16>,
+    ) -> Result<Self, IrohNetError> {
         let bytes: [u8; 32] = secret
             .expose()
             .try_into()
             .map_err(|_| IrohNetError::BadSecret)?;
         let secret_key = SecretKey::from_bytes(&bytes);
-        // `presets::Minimal` sets only the mandatory crypto provider — no relay,
-        // no address-lookup/discovery — matching decision 19's static peer book.
-        let mut builder = Endpoint::builder(presets::Minimal)
-            .secret_key(secret_key)
-            .alpns(vec![ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled);
+        let mut builder = match profile {
+            NetProfile::Hermetic => {
+                Endpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled)
+            }
+            NetProfile::N0 => Endpoint::builder(presets::N0),
+        };
         if let Some(port) = port {
             builder = builder
                 .bind_addr(format!("0.0.0.0:{port}"))
                 .map_err(|e| IrohNetError::Bind(e.to_string()))?;
         }
         let endpoint = builder
+            .secret_key(secret_key)
+            .alpns(vec![ALPN.to_vec()])
             .bind()
             .await
             .map_err(|e| IrohNetError::Bind(e.to_string()))?;
@@ -192,6 +220,23 @@ impl IrohNet {
         }
     }
 
+    /// Introduce a peer by endpoint id alone — usable under
+    /// [`NetProfile::N0`], where address lookup resolves the id to a path
+    /// (relay and, when hole-punching succeeds, direct).
+    pub fn add_peer_by_id(&self, id: &EndpointId) -> Result<(), IrohNetError> {
+        let node_id = endpoint_id_to_node_id(id)?;
+        self.add_peer(NodeAddr::new(node_id));
+        Ok(())
+    }
+
+    /// A one-line description of the live network paths to `peer`, if a
+    /// connection exists — diagnostic sugar for checks ("did hole-punching
+    /// win, or are we relaying?").
+    pub async fn paths_to(&self, peer: &EndpointId) -> Option<String> {
+        let connections = self.shared.connections.lock().await;
+        connections.get(peer).map(|c| format!("{:?}", c.paths()))
+    }
+
     /// Introduce a peer: static addressing, per the deferred-discovery
     /// decision. Returns the peer's domain endpoint id.
     pub fn add_peer(&self, addr: NodeAddr) -> EndpointId {
@@ -222,10 +267,10 @@ impl Registry for IrohNet {
             return Err(IrohNetError::WrongEndpoint);
         }
         let mut router = self.shared.router.lock().expect("router poisoned");
-        if let Some(existing) = router.bound.get(&address.name) {
-            if !existing.is_closed() {
-                return Err(IrohNetError::NameInUse);
-            }
+        if let Some(existing) = router.bound.get(&address.name)
+            && !existing.is_closed()
+        {
+            return Err(IrohNetError::NameInUse);
         }
         let (tx, rx) = mpsc::unbounded_channel();
         router.bound.insert(address.name.clone(), tx);
@@ -293,10 +338,8 @@ impl IrohTransport {
         force_fresh: bool,
     ) -> Result<iroh::endpoint::Connection, IrohTransportError> {
         let mut connections = self.shared.connections.lock().await;
-        if !force_fresh {
-            if let Some(existing) = connections.get(peer) {
-                return Ok(existing.clone());
-            }
+        if !force_fresh && let Some(existing) = connections.get(peer) {
+            return Ok(existing.clone());
         }
         let addr = self
             .shared

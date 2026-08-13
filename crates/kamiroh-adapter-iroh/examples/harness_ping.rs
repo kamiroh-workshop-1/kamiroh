@@ -2,11 +2,9 @@
 //!
 //! Two modes, one per container:
 //!
-//! - `serve  --secret <64-hex> --allow <peer endpoint id, 64-hex> [--port <n>]`
-//!   Binds an endpoint (on a fixed UDP port if `--port` is given — for
-//!   pre-arranged dialability, e.g. behind a router port-forward), hosts a
-//!   Kameo runtime with a harness actor admitting the given peer, prints its
-//!   own `ID` and `ADDR` lines, then waits.
+//! - `serve  --secret <64-hex> --allow <peer endpoint id, 64-hex>`
+//!   Binds an endpoint, hosts a Kameo runtime with a harness actor admitting
+//!   the given peer, prints its own `ID` and `ADDR` lines, then waits.
 //! - `check  --secret <64-hex> --peer-id <64-hex> --peer-ip <ip:port>`
 //!   Binds an endpoint, introduces the peer statically, then runs the
 //!   spike's standard proof across the wire: harness ping → remote spawn →
@@ -24,7 +22,7 @@ use std::time::{Duration, Instant};
 use iroh::{EndpointAddr, TransportAddr};
 use tokio::time::timeout;
 
-use kamiroh_adapter_iroh::{IrohInbox, IrohNet};
+use kamiroh_adapter_iroh::{IrohInbox, IrohNet, NetProfile};
 use kamiroh_adapter_kameo::KameoRuntime;
 use kamiroh_app::inbound::{Inbound, process};
 use kamiroh_app::phone::Phone;
@@ -41,7 +39,7 @@ use kamiroh_ports::{Inbox, Registry, Transport};
 const WAIT: Duration = Duration::from_secs(15);
 
 fn hex_to_bytes(s: &str) -> Result<Vec<u8>, String> {
-    if s.len() % 2 != 0 || !s.chars().all(|c| c.is_ascii_hexdigit()) {
+    if !s.len().is_multiple_of(2) || !s.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(format!("not a hex string: {s}"));
     }
     Ok((0..s.len())
@@ -63,8 +61,11 @@ fn name(s: &str) -> ActorName {
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  harness_ping serve --secret <64-hex> --allow <peer-id-64-hex>\n  \
-         harness_ping check --secret <64-hex> --peer-id <64-hex> --peer-ip <ip:port>"
+        "usage:\n  harness_ping serve --secret <64-hex> --allow <peer-id-64-hex> [--net hermetic|n0] [--port <n>]\n  \
+         harness_ping check --secret <64-hex> --peer-id <64-hex> [--peer-ip <ip:port>] [--net hermetic|n0]\n\
+         --peer-ip is required under --net hermetic; under --net n0 the id alone suffices\n\
+         (n0 = relays + address lookup: dial by id, NATs handled by iroh)\n\
+         --port fixes the listen port (relay-less pre-arranged dialability)"
     );
     exit(2);
 }
@@ -79,14 +80,30 @@ async fn main() {
         exit(2)
     });
     let secret = Secret::new(secret_bytes);
+    let profile = match arg(&args, "--net").as_deref() {
+        None | Some("hermetic") => NetProfile::Hermetic,
+        Some("n0") => NetProfile::N0,
+        Some(other) => {
+            eprintln!("--net must be hermetic or n0, got {other}");
+            exit(2)
+        }
+    };
+
     let port: Option<u16> = arg(&args, "--port").map(|p| {
         p.parse().unwrap_or_else(|_| {
             eprintln!("--port must be a number");
             exit(2)
         })
     });
-
-    let net = IrohNet::bind_on(&secret, port).await.unwrap_or_else(|e| {
+    let net = match (profile, port) {
+        (NetProfile::Hermetic, port) => IrohNet::bind_on(&secret, port).await,
+        (profile, None) => IrohNet::bind_with(&secret, profile).await,
+        (_, Some(_)) => {
+            eprintln!("--port only applies under --net hermetic (n0 dials by id)");
+            exit(2)
+        }
+    }
+    .unwrap_or_else(|e| {
         eprintln!("bind failed: {e}");
         exit(1)
     });
@@ -99,10 +116,15 @@ async fn main() {
     match mode.as_str() {
         "serve" => serve(net, &arg(&args, "--allow").unwrap_or_else(|| usage())).await,
         "check" => {
+            let peer_ip = arg(&args, "--peer-ip");
+            if peer_ip.is_none() && profile == NetProfile::Hermetic {
+                eprintln!("--peer-ip is required under --net hermetic");
+                usage()
+            }
             check(
                 net,
                 &arg(&args, "--peer-id").unwrap_or_else(|| usage()),
-                &arg(&args, "--peer-ip").unwrap_or_else(|| usage()),
+                peer_ip.as_deref(),
             )
             .await
         }
@@ -123,14 +145,22 @@ async fn serve(net: IrohNet, allow_hex: &str) {
     std::future::pending::<()>().await;
 }
 
-async fn check(net: IrohNet, peer_id_hex: &str, peer_ip: &str) {
-    // Static introduction: reconstruct the server's EndpointAddr from the
-    // ID and ADDR lines it printed.
+async fn check(net: IrohNet, peer_id_hex: &str, peer_ip: Option<&str>) {
+    // Introduction: with an explicit ip:port, static (hermetic). By id
+    // alone (n0), address lookup + relays find the path — no exterior
+    // path-figuring required.
     let peer_iroh_id =
         iroh::EndpointId::from_str(peer_id_hex).expect("--peer-id must be a 64-hex endpoint id");
-    let sock = SocketAddr::from_str(peer_ip).expect("--peer-ip must be ip:port");
-    let peer_addr = EndpointAddr::from_parts(peer_iroh_id, [TransportAddr::Ip(sock)]);
-    let peer = net.add_peer(peer_addr);
+    let peer = match peer_ip {
+        Some(ip) => {
+            let sock = SocketAddr::from_str(ip).expect("--peer-ip must be ip:port");
+            net.add_peer(EndpointAddr::from_parts(
+                peer_iroh_id,
+                [TransportAddr::Ip(sock)],
+            ))
+        }
+        None => net.add_peer(EndpointAddr::new(peer_iroh_id)),
+    };
 
     let mut allowlist = Allowlist::empty();
     allowlist.admit(peer.clone());
@@ -203,6 +233,9 @@ async fn check(net: IrohNet, peer_id_hex: &str, peer_ip: &str) {
         }
     }
     println!("TURN OK (ack seen: {saw_ack})");
+    if let Some(paths) = net.paths_to(&peer).await {
+        println!("PATHS {paths}");
+    }
     println!("CHECK PASSED");
 }
 
