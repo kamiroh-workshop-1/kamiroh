@@ -284,6 +284,23 @@ embedding applications depend on.
     `Ack` stays distinct (decision 4): runtimes ack a turn's request half on
     handover, before the party thinks. Deferred: acks for `Close` turns,
     timeouts, disconnect mid-exchange, streaming/partial responses.
+18. **Wire encoding is postcard over a feature-gated serde.** The domain
+    stays dependency-free by default; the `serde` feature adds derives to the
+    vocabulary (with `ActorName` deserializing through its validating
+    constructor). Wire adapters enable the feature and choose the format —
+    the Iroh adapter uses postcard (compact, serde-native). Format choice
+    stays adapter-local; nothing outside an adapter may depend on it.
+19. **Iroh adapter v0: static peer book, one frame per uni-stream, origin
+    from the connection.** Endpoint-id→address resolution is an explicit
+    peer book (`add_peer`), per the deferred-discovery decision. Each message
+    travels as one length-delimited postcard frame `{from_name, to_name,
+    message}` on a fresh uni-stream over a cached per-peer connection (one
+    retry on stale connections); the ALPN is `kamiroh/0`. The receiving
+    adapter constructs `Delivery::from` with the endpoint taken from the
+    connection's authenticated remote key — never from frame content — and
+    only the name halves ride in the frame. Relays and discovery are
+    disabled in tests (loopback direct addresses); production relay policy
+    is deferred.
 
 ## Deferred
 

@@ -6,10 +6,12 @@
 use crate::actor::ActorName;
 
 /// Correlates an [`Ack`] (and, later, a `Response`) with its [`Request`].
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RequestId(pub [u8; 16]);
 
 /// A payload addressed to the party behind an actor.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
     pub id: RequestId,
@@ -23,6 +25,7 @@ pub struct Request {
 /// Deliberately distinct from any future `Response` (the party's actual
 /// answer), so response semantics can arrive later without remodeling
 /// (`ARCHITECTURE.md`, decision 4).
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ack {
     pub id: RequestId,
@@ -36,6 +39,7 @@ pub struct Ack {
 /// is deliberately deferred (`ARCHITECTURE.md`, decision 6).
 /// Its exchanges are command/reply pairs: `Spawn → Spawned`, `Stop → Stopped`,
 /// `Ping → Pong`, with [`Harness::Failed`] as the error reply to any command.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Harness {
     /// Command: spawn a named actor at the receiving endpoint.
@@ -56,6 +60,7 @@ pub enum Harness {
 
 /// The party's actual answer to a [`Request`] — distinct from [`Ack`], which
 /// is only the delivery receipt (`ARCHITECTURE.md`, decision 4).
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response {
     /// The request this answers.
@@ -74,6 +79,7 @@ pub struct Response {
 /// (answer + new request), concluded by [`Turn::Close`] (answer, nothing
 /// further asked). One incoming turn = one atomic party state change = at
 /// most one outgoing turn, emitted only after the state settles.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Turn {
     /// Opens an exchange: a request with no response half.
@@ -108,6 +114,7 @@ impl Turn {
 }
 
 /// Everything an actor may say. Closed in v0 (`ARCHITECTURE.md`, decision 5).
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
     Request(Request),

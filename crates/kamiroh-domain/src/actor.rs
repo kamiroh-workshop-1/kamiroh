@@ -8,6 +8,8 @@ use crate::endpoint::EndpointId;
 ///
 /// Names are addressing, not authentication: the remote runtime claims them,
 /// nothing proves them. See the trust model in `ARCHITECTURE.md`.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "String", into = "String"))]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ActorName(String);
 
@@ -22,6 +24,20 @@ impl ActorName {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl TryFrom<String> for ActorName {
+    type Error = ActorNameError;
+
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        Self::new(s)
+    }
+}
+
+impl From<ActorName> for String {
+    fn from(name: ActorName) -> Self {
+        name.0
     }
 }
 
