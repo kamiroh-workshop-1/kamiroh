@@ -5,10 +5,11 @@ outside this repo) — for future developers curious about, or wanting to
 borrow, the workflow behind this project. Written August 2026, mid-spike-1.*
 
 kamiroh is developed by a small ensemble: one human (Casey) making the
-decisions and holding the keys, and AI sessions doing the drafting, building,
-and reviewing — a cloud-based design session with long-lived context, and
-local Claude Code sessions with network access and build tools. The workflow
-below is what lets that ensemble move fast without stepping on itself.
+decisions and holding the keys, and two named AI sessions doing the drafting,
+building, and reviewing — a cloud-based design session with long-lived
+context, and local Claude Code sessions with network access and build tools.
+The workflow below is what lets that ensemble move fast without stepping on
+itself.
 
 ## Tiers: one fork per architectural experiment
 
@@ -33,9 +34,9 @@ eventually graduates to main.
 
 ## The division of labor
 
-The **design session** (cloud) holds the architecture: it writes
-`ARCHITECTURE.md` and most of the code, keeps the glossary and decision log,
-and reviews everything before it merges. Its sandbox cannot reach crates.io
+The **design session** (cloud), called **Mez**, holds the architecture: it
+writes `ARCHITECTURE.md` and most of the code, keeps the glossary and decision
+log, and reviews everything before it merges. Its sandbox cannot reach crates.io
 or push to GitHub — constraints that shaped two habits worth naming:
 
 - **Blind-writing with assumption lists.** Adapter code against external
@@ -48,10 +49,10 @@ or push to GitHub — constraints that shaped two habits worth naming:
   human's local clone; the human (or a Code session) pushes. Verification
   closes the loop by anonymous fetch from GitHub.
 
-**Build sessions** (local Claude Code) do what the cloud cannot: resolve
-dependencies, run the first real build, fix mechanical API drift — under
-strict scope instructions, with a standing order to **STOP and write a
-brief** rather than redesign when something structural surfaces. One such
+**Build sessions** (local Claude Code), called **Ander**, do what the cloud
+cannot: resolve dependencies, run the first real build, fix mechanical API
+drift — under strict scope instructions, with a standing order to **STOP and
+write a brief** rather than redesign when something structural surfaces. One such
 stop produced the ports-`Send` advisory exchange preserved in
 `docs/advisories/` — the full deliberation behind decision 15, kept because
 a decision log entry says *what* and an advisory says *why it was hard*.
@@ -88,9 +89,10 @@ that shuttle nearly frictionless:
 ## Rules that keep it sane
 
 - **Agent branch namespaces.** Each AI works only under its slash-prefixed
-  branches (`cowork/*` for the design session; other tools get their own
-  prefixes). Nobody commits to `master` directly — it advances only by
-  deliberate merges, done by the human or on explicit request.
+  branches (`cowork/*` for the design session, Mez; `code/*` for the build
+  session, Ander; other tools get their own prefixes). Nobody commits to
+  `master` directly — it advances only by deliberate merges, done by the human
+  or on explicit request.
 - **Ancestry is sacred between tiers — with one carved-out boundary.**
   Traffic between long-lived tier mainlines uses plain merge commits or
   fast-forwards, never squash/rebase merges (which re-apply commits under
