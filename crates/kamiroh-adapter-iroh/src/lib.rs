@@ -120,6 +120,14 @@ impl IrohNet {
     /// comes from the peer book (decision 19); production relay policy is
     /// deferred.
     pub async fn bind(secret: &Secret) -> Result<Self, IrohNetError> {
+        Self::bind_on(secret, None).await
+    }
+
+    /// Like [`IrohNet::bind`], but listening on a fixed UDP port — for
+    /// endpoints that must be dialable at a pre-arranged address (a
+    /// port-forwarded home router, a container with a published port).
+    /// `port` 0 behaves like [`IrohNet::bind`] (ephemeral).
+    pub async fn bind_on(secret: &Secret, port: Option<u16>) -> Result<Self, IrohNetError> {
         let bytes: [u8; 32] = secret
             .expose()
             .try_into()
@@ -127,10 +135,16 @@ impl IrohNet {
         let secret_key = SecretKey::from_bytes(&bytes);
         // `presets::Minimal` sets only the mandatory crypto provider — no relay,
         // no address-lookup/discovery — matching decision 19's static peer book.
-        let endpoint = Endpoint::builder(presets::Minimal)
+        let mut builder = Endpoint::builder(presets::Minimal)
             .secret_key(secret_key)
             .alpns(vec![ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled)
+            .relay_mode(RelayMode::Disabled);
+        if let Some(port) = port {
+            builder = builder
+                .bind_addr(format!("0.0.0.0:{port}"))
+                .map_err(|e| IrohNetError::Bind(e.to_string()))?;
+        }
+        let endpoint = builder
             .bind()
             .await
             .map_err(|e| IrohNetError::Bind(e.to_string()))?;

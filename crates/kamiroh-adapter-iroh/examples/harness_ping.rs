@@ -2,9 +2,11 @@
 //!
 //! Two modes, one per container:
 //!
-//! - `serve  --secret <64-hex> --allow <peer endpoint id, 64-hex>`
-//!   Binds an endpoint, hosts a Kameo runtime with a harness actor admitting
-//!   the given peer, prints its own `ID` and `ADDR` lines, then waits.
+//! - `serve  --secret <64-hex> --allow <peer endpoint id, 64-hex> [--port <n>]`
+//!   Binds an endpoint (on a fixed UDP port if `--port` is given — for
+//!   pre-arranged dialability, e.g. behind a router port-forward), hosts a
+//!   Kameo runtime with a harness actor admitting the given peer, prints its
+//!   own `ID` and `ADDR` lines, then waits.
 //! - `check  --secret <64-hex> --peer-id <64-hex> --peer-ip <ip:port>`
 //!   Binds an endpoint, introduces the peer statically, then runs the
 //!   spike's standard proof across the wire: harness ping → remote spawn →
@@ -77,8 +79,14 @@ async fn main() {
         exit(2)
     });
     let secret = Secret::new(secret_bytes);
+    let port: Option<u16> = arg(&args, "--port").map(|p| {
+        p.parse().unwrap_or_else(|_| {
+            eprintln!("--port must be a number");
+            exit(2)
+        })
+    });
 
-    let net = IrohNet::bind(&secret).await.unwrap_or_else(|e| {
+    let net = IrohNet::bind_on(&secret, port).await.unwrap_or_else(|e| {
         eprintln!("bind failed: {e}");
         exit(1)
     });
