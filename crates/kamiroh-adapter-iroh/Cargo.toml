@@ -11,7 +11,7 @@ kamiroh-domain = { workspace = true, features = ["serde"] }
 kamiroh-ports.workspace = true
 # Version assumptions — first local build pass: bump to latest, fix API drift
 # per the notes at the top of src/lib.rs.
-iroh = "0.35"
+iroh = "1"
 postcard = { version = "1", features = ["use-std"] }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["rt", "macros", "sync"] }

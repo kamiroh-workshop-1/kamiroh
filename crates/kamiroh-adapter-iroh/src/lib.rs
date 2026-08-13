@@ -50,7 +50,11 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
-use iroh::{Endpoint, NodeAddr, NodeId, RelayMode, SecretKey};
+// iroh 1.0 renamed NodeId -> EndpointId and NodeAddr -> EndpointAddr. Alias
+// them back to the adapter's names, which stay distinct from the domain's own
+// `EndpointId` and keep the routing/framing code below unchanged.
+use iroh::endpoint::presets;
+use iroh::{Endpoint, EndpointAddr as NodeAddr, EndpointId as NodeId, RelayMode, SecretKey, Watcher};
 use tokio::sync::mpsc;
 
 use kamiroh_domain::actor::{ActorName, Address};
@@ -119,7 +123,9 @@ impl IrohNet {
             .try_into()
             .map_err(|_| IrohNetError::BadSecret)?;
         let secret_key = SecretKey::from_bytes(&bytes);
-        let endpoint = Endpoint::builder()
+        // `presets::Minimal` sets only the mandatory crypto provider — no relay,
+        // no address-lookup/discovery — matching decision 19's static peer book.
+        let endpoint = Endpoint::builder(presets::Minimal)
             .secret_key(secret_key)
             .alpns(vec![ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled)
@@ -127,7 +133,7 @@ impl IrohNet {
             .await
             .map_err(|e| IrohNetError::Bind(e.to_string()))?;
 
-        let endpoint_id = node_id_to_endpoint_id(endpoint.node_id());
+        let endpoint_id = node_id_to_endpoint_id(endpoint.id());
         let shared = Arc::new(Shared {
             endpoint,
             endpoint_id,
@@ -154,19 +160,26 @@ impl IrohNet {
 
     /// This endpoint's dialable address, for handing to peers' `add_peer`.
     pub async fn addr(&self) -> Result<NodeAddr, IrohNetError> {
-        // Assumption point 2: node_addr may be a watcher.
-        self.shared
-            .endpoint
-            .node_addr()
-            .initialized()
-            .await
-            .map_err(|e| IrohNetError::Addr(e.to_string()))
+        // iroh 1.0: `addr()` is a plain getter over a watcher whose direct
+        // addresses populate shortly after bind. Wait for the first non-empty
+        // set so the peer book never caches an undialable address.
+        let mut watcher = self.shared.endpoint.watch_addr();
+        loop {
+            let addr = watcher.get();
+            if !addr.addrs.is_empty() {
+                return Ok(addr);
+            }
+            watcher
+                .updated()
+                .await
+                .map_err(|e| IrohNetError::Addr(format!("{e:?}")))?;
+        }
     }
 
     /// Introduce a peer: static addressing, per the deferred-discovery
     /// decision. Returns the peer's domain endpoint id.
     pub fn add_peer(&self, addr: NodeAddr) -> EndpointId {
-        let id = node_id_to_endpoint_id(addr.node_id);
+        let id = node_id_to_endpoint_id(addr.id);
         self.shared
             .peers
             .lock()
@@ -319,9 +332,8 @@ async fn accept_loop(shared: Arc<Shared>) {
                 return;
             };
             // The proven origin: the connection's authenticated remote key.
-            let Ok(remote) = connection.remote_node_id() else {
-                return;
-            };
+            // iroh 1.0: `remote_id()` on an established Connection is infallible.
+            let remote = connection.remote_id();
             let origin = node_id_to_endpoint_id(remote);
             loop {
                 let Ok(mut stream) = connection.accept_uni().await else {
