@@ -103,7 +103,15 @@ that shuttle nearly frictionless:
   `vendor/` for hermetic offline builds, but committed blobs ride
   ancestry-preserving merges forever — so vendor lives on a force-pushed
   orphan artifact branch (`vendor-snapshot`), and `master` gitignores it.
-  `docs/VENDORING.md` has the mechanics.
+  `docs/VENDORING.md` has the mechanics. Both build paths are verified after
+  every de-vendor, so neither silently rots: `master` must build *the
+  ordinary way* against crates.io — wipe `target/`, then
+  `cargo fetch --locked && cargo build --workspace && cargo test --workspace`,
+  with the committed `Cargo.lock` resolving unchanged and nothing special to
+  configure — and the offline path is checked the mirror way, restoring
+  `vendor-snapshot` and rerunning under `--offline`. Last confirmed green on
+  `master` after the iroh 1.0 bump: identical results both ways (38 tests,
+  including the real-loopback-QUIC transport suite).
 - **Decisions are written down twice.** The compressed *what* goes in
   `ARCHITECTURE.md`'s numbered decision log; contested decisions keep their
   full deliberation as advisory documents in `docs/advisories/`.
