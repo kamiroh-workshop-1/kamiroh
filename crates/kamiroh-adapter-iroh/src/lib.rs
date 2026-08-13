@@ -54,7 +54,9 @@ use std::sync::{Arc, Mutex};
 // them back to the adapter's names, which stay distinct from the domain's own
 // `EndpointId` and keep the routing/framing code below unchanged.
 use iroh::endpoint::presets;
-use iroh::{Endpoint, EndpointAddr as NodeAddr, EndpointId as NodeId, RelayMode, SecretKey, Watcher};
+use iroh::{
+    Endpoint, EndpointAddr as NodeAddr, EndpointId as NodeId, RelayMode, SecretKey, Watcher,
+};
 use tokio::sync::mpsc;
 
 use kamiroh_domain::actor::{ActorName, Address};
@@ -297,6 +299,10 @@ impl IrohTransport {
             .await
             .map_err(|e| IrohTransportError::Connect(e.to_string()))?;
         connections.insert(peer.clone(), connection.clone());
+        // Streams the peer opens on THIS connection (e.g. replies) arrive
+        // here, not at the accept loop — every connection gets a reader,
+        // whichever side dialed it.
+        spawn_reader(Arc::clone(&self.shared), connection.clone());
         Ok(connection)
     }
 }
@@ -331,34 +337,54 @@ async fn accept_loop(shared: Arc<Shared>) {
             let Ok(connection) = incoming.await else {
                 return;
             };
-            // The proven origin: the connection's authenticated remote key.
-            // iroh 1.0: `remote_id()` on an established Connection is infallible.
-            let remote = connection.remote_id();
-            let origin = node_id_to_endpoint_id(remote);
-            loop {
-                let Ok(mut stream) = connection.accept_uni().await else {
-                    return; // connection closed
-                };
-                let Ok(bytes) = stream.read_to_end(MAX_FRAME_BYTES).await else {
-                    continue;
-                };
-                let Ok(frame) = postcard::from_bytes::<Frame>(&bytes) else {
-                    continue; // malformed frame: drop
-                };
-                let delivery = Delivery {
-                    from: Address::new(origin.clone(), frame.from_name),
-                    to: Address::new(shared.endpoint_id.clone(), frame.to_name),
-                    message: frame.message,
-                };
-                let router = shared.router.lock().expect("router poisoned");
-                if let Some(tx) = router.bound.get(&delivery.to.name) {
-                    // Unknown or closed bindings drop silently: an unbound
-                    // name discloses nothing.
-                    let _ = tx.send(delivery);
-                }
-            }
+            // An inbound connection teaches us the peer: cache it so replies
+            // flow back over the very connection the request arrived on. A
+            // receiving endpoint therefore needs no peer-book entry for its
+            // callers — admission still gates every delivery at the app
+            // layer. (Found by the Incus-check rehearsal: without this, a
+            // server could hear but never answer an unknown-address caller.)
+            let origin = node_id_to_endpoint_id(connection.remote_id());
+            shared
+                .connections
+                .lock()
+                .await
+                .insert(origin, connection.clone());
+            spawn_reader(shared, connection);
         });
     }
+}
+
+/// Read frames off one connection for its lifetime, routing deliveries to
+/// bound actors. Spawned for every connection — accepted *or* dialed —
+/// because QUIC is bidirectional: the peer may open streams on either.
+fn spawn_reader(shared: Arc<Shared>, connection: iroh::endpoint::Connection) {
+    tokio::spawn(async move {
+        // The proven origin: the connection's authenticated remote key.
+        // iroh 1.0: `remote_id()` on an established Connection is infallible.
+        let origin = node_id_to_endpoint_id(connection.remote_id());
+        loop {
+            let Ok(mut stream) = connection.accept_uni().await else {
+                return; // connection closed
+            };
+            let Ok(bytes) = stream.read_to_end(MAX_FRAME_BYTES).await else {
+                continue;
+            };
+            let Ok(frame) = postcard::from_bytes::<Frame>(&bytes) else {
+                continue; // malformed frame: drop
+            };
+            let delivery = Delivery {
+                from: Address::new(origin.clone(), frame.from_name),
+                to: Address::new(shared.endpoint_id.clone(), frame.to_name),
+                message: frame.message,
+            };
+            let router = shared.router.lock().expect("router poisoned");
+            if let Some(tx) = router.bound.get(&delivery.to.name) {
+                // Unknown or closed bindings drop silently: an unbound
+                // name discloses nothing.
+                let _ = tx.send(delivery);
+            }
+        }
+    });
 }
 
 fn node_id_to_endpoint_id(id: NodeId) -> EndpointId {

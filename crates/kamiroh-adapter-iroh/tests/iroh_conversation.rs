@@ -180,6 +180,47 @@ async fn actors_converse_across_real_iroh_endpoints() {
 }
 
 #[tokio::test]
+async fn one_sided_introduction_suffices_for_replies() {
+    // Only the caller knows the server's address; the server has an EMPTY
+    // peer book. Replies must ride back over the inbound connection
+    // (learned-peer caching in the accept loop).
+    let net_a = IrohNet::bind(&Secret::new(vec![6; 32])).await.unwrap();
+    let net_b = IrohNet::bind(&Secret::new(vec![7; 32])).await.unwrap();
+
+    let addr_b = net_b.addr().await.unwrap();
+    let id_b = net_a.add_peer(addr_b);
+    let id_a = net_a.endpoint_id().clone();
+    // Deliberately NO net_b.add_peer(addr_a).
+
+    let runtime = KameoRuntime::new(id_b.clone(), net_b.transport(), net_b.clone());
+    let mut harness_list = Allowlist::empty();
+    harness_list.admit(id_a.clone());
+    runtime
+        .install(name("harness"), harness_list, ActorKind::Harness)
+        .unwrap();
+
+    let controller = Address::new(id_a, name("controller"));
+    let mut a_registry = net_a.clone();
+    let mut inbox = a_registry.bind(&controller).unwrap();
+    let mut controller_list = Allowlist::empty();
+    controller_list.admit(id_b.clone());
+
+    let mut transport = net_a.transport();
+    transport
+        .send(
+            &controller,
+            &Address::new(id_b, name("harness")),
+            Message::Harness(Harness::Ping),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        next_harness(&mut inbox, &controller_list).await,
+        Harness::Pong
+    );
+}
+
+#[tokio::test]
 async fn unadmitted_endpoints_are_denied_across_the_wire() {
     let net_a = IrohNet::bind(&Secret::new(vec![3; 32])).await.unwrap();
     let net_b = IrohNet::bind(&Secret::new(vec![4; 32])).await.unwrap();
