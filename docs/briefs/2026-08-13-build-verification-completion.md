@@ -85,3 +85,40 @@ changed how sources are obtained, not what gets built.
   re-vendor → force-push `vendor-snapshot` → verify crates.io → verify offline.
 - **No structural surprises.** This was pure workflow/packaging plumbing; no code
   or dependency changed between the two verification runs beyond the docs commit.
+
+---
+
+## Addendum — 2026-08-13: the `incus-check` merge (habit applied)
+
+First real exercise of the two-sided habit against an incoming *code* change,
+not just docs.
+
+**Merged.** `cowork/incus-check` (`56ee1ac`, "symmetric connection readers + the
+Incus check kit") fast-forwarded onto master (`ed52d22 → 56ee1ac`). It adds
+symmetric connection readers in the iroh adapter (`lib.rs`, +80), a new
+end-to-end denial test, the `harness_ping` example, and `docs/INCUS-CHECK.md`.
+
+**Gated before the push.** Because design-session `feat:` branches are written
+without compiling, I ff-merged *locally* first and verified against crates.io
+before pushing — protecting master rather than trusting a blind-written branch:
+
+- Fresh adapter + `--examples` build: **zero warnings, zero errors** (the new
+  example compiles). The blind-written branch built on the **first try — no
+  fixes needed** (continuing the strong track record: kameo 4/5, iroh 4/7,
+  incus-check clean).
+- `cargo test --workspace`: **39 passed, 0 failed** (up from 38).
+  `iroh_conversation` grew 2 → 3 tests (added
+  `unadmitted_endpoint_is_denied_end_to_end`), ~2.1 s real QUIC.
+
+**Both paths re-confirmed at `56ee1ac`.**
+
+- crates.io: 39 passed / 0 failed; `harness_ping` compiles.
+- `vendor-snapshot` offline: `Cargo.lock` **identical** to the snapshot (the
+  merge changed no dependencies → no re-vendor), 39 passed / 0 failed from a
+  wiped `target/`, and the example builds hermetically.
+
+**State:** master `56ee1ac`; `vendor-snapshot` untouched (`c827050`, still
+matches); `cowork/incus-check` pushed and preserved. The invariant holds: online
+and offline agree, 39/39, examples build on both. Habit worked exactly as the
+rule above prescribes — a code merge is gated and both-sided-verified, not
+waved through.
