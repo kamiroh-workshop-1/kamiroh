@@ -195,15 +195,9 @@ impl NowOrNever for kamiroh::adapter_memory::MemoryInbox {
     fn now_or_never_is_empty(&mut self) -> bool {
         use std::future::Future;
         use std::pin::pin;
-        use std::sync::Arc;
-        use std::task::{Context, Poll, Wake, Waker};
+        use std::task::{Context, Poll, Waker};
 
-        struct Noop;
-        impl Wake for Noop {
-            fn wake(self: Arc<Self>) {}
-        }
-        let waker = Waker::from(Arc::new(Noop));
-        let mut cx = Context::from_waker(&waker);
+        let mut cx = Context::from_waker(Waker::noop());
         let mut fut = pin!(self.next());
         matches!(fut.as_mut().poll(&mut cx), Poll::Pending)
     }
