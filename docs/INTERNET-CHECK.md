@@ -15,27 +15,35 @@ one side is deliberately dialable via port-forward. Double-blind traversal
 stays with the deferred relay/discovery work — this check is its
 prerequisite rung.
 
-## One-time setup (Mac mini side)
+## The port-forward is a lease, not configuration (Mac mini side)
 
-1. Pick a UDP port, e.g. `4711`. On the home router, forward **UDP** 4711 →
-   the mini's LAN IP, port 4711.
-2. Allow the binary through macOS's firewall if prompted on first run.
-3. Note the home network's public IP (e.g. from the router's status page).
-   If the ISP uses CGNAT for the *home* connection too (public IP on the
-   router differs from what whatismyip-style services report), the forward
-   will not be reachable — that finding itself is worth recording.
+Don't add a standing forward in the router UI. Use
+`scripts/internet-check-serve.sh`, which requests a **time-limited lease**
+from the router programmatically (NAT-PMP/PCP via `natpmpc`, UPnP fallback
+via `upnpc` — `brew install libnatpmp miniupnpc`). Its `run` mode couples
+every lifetime together: open the lease → start the server on the fixed
+port → renew in the background → revoke on Ctrl-C, with the lease's own
+TTL (2 h) as the fail-safe if anything crashes or a terminal is forgotten.
+One command is one test window; forgetting to close fails safe.
+(`open`/`close`/`status` exist for manual control; if the router speaks
+neither protocol, use its admin UI and treat open/close as your checklist.)
+
+Also: allow the binary through macOS's firewall if prompted on first run.
+The script prints the public address to hand to the checker. If the ISP
+itself uses CGNAT for the home connection (the router's WAN IP differs from
+the printed public IP), the lease will not be reachable from outside — that
+finding itself is worth recording.
 
 ## Steps
 
 ```sh
-# Mini (server) — fixed port so the forward stays valid across runs:
+# Mini (server) — one command, one leased test window (Ctrl-C ends both):
 cd kamiroh && cargo build --release --example harness_ping -p kamiroh-adapter-iroh
-./target/release/examples/harness_ping serve \
+scripts/internet-check-serve.sh run 4711 -- \
   --secret 0202020202020202020202020202020202020202020202020202020202020202 \
-  --allow 8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c \
-  --port 4711
-# prints ID 8139...b394 and ADDR lines showing its LAN view — that's
-# expected; the caller uses the PUBLIC address instead.
+  --allow 8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c
+# prints the lease, the PUBLIC ip:port for the checker, then ID/ADDR lines
+# (the ADDR lines show its LAN view — expected; callers use the public one).
 
 # Laptop (checker), on the phone hotspot — clone, build, dial the public IP:
 git clone --depth 1 https://github.com/kamiroh-workshop-1/kamiroh.git
