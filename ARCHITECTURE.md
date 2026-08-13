@@ -301,6 +301,18 @@ embedding applications depend on.
     only the name halves ride in the frame. Relays and discovery are
     disabled in tests (loopback direct addresses); production relay policy
     is deferred.
+20. **Vendored sources live on an artifact branch; publication is a history
+    boundary.** Refines decision 14 after the iroh tree took `vendor/` to
+    ~559 MB: committed blobs ride ancestry-preserving merges forever, so
+    `master` now gitignores `vendor/` and `.cargo/`; the orphan
+    `vendor-snapshot` branch (force-pushed, merged into nothing) carries
+    them for the cloud session's hermetic builds. The workshop's existing
+    vendor history stays its private cost: graduation to staging publishes
+    a fresh vendor-free snapshot branch — a deliberate content-not-ancestry
+    boundary, carved out from the cross-tier merge-commit rule, justified
+    because a workshop fork is archival once its spike graduates. Within
+    staging and staging→main, ancestry-preserving merges remain mandatory.
+    (Full guide: `docs/VENDORING.md`.)
 
 ## Deferred
 
