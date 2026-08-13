@@ -65,6 +65,18 @@ signed address record to n0's public lookup service — inherent to
 discoverability, worth knowing it's public, and it stops when the server
 stops.
 
+For any window you can't attend — the server running while you're out
+testing from elsewhere — don't use the demo secrets at all. Generate
+**one-off identities** instead: a fresh random secret per side
+(`openssl rand -hex 32`), learn each side's id from the `ID` line of a
+quick hermetic serve, and exchange only the ids out of band. Both risks
+close at once: the allowlist admits exactly one id whose secret nobody
+else holds, and the published record becomes unfetchable in practice —
+n0 lookups are keyed by id, and a one-off id appears nowhere public. Add
+a self-stop timer on the server and the window bounds itself. This is
+the default posture for any run longer than a coffee; the café leg of
+[the first brief](briefs/2026-08-13-internet-check-brief.md) ran this way.
+
 ## The relay-less variant (single-NAT setups, no n0 dependency)
 
 Where the server side sits behind exactly one NAT that its operator
