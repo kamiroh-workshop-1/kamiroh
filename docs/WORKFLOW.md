@@ -118,6 +118,24 @@ that shuttle nearly frictionless:
   `ARCHITECTURE.md`'s numbered decision log; contested decisions keep their
   full deliberation as advisory documents in `docs/advisories/`.
 
+## Toolchains
+
+The two sessions run different Rust toolchains, on purpose and by constraint:
+
+- **Mez's cloud sandbox is pinned by its environment** — currently `rustc
+  1.95.0`, and it *cannot change*: the network is allowlisted, so `rustup`
+  can't download another toolchain. This is the **floor for language
+  features** — code must compile on the sandbox's version.
+- **Ander's local toolchain floats newer** — currently `rustc 1.97` — so it
+  builds against crates.io and runs the real first build.
+
+We deliberately do **not** pin a `rust-toolchain.toml`: a newer pin would break
+Mez's sandbox outright, and pinning the older one would silence exactly the
+signal we want. Ander's newer clippy catching lints Mez's older one misses is a
+feature, not a discrepancy — those findings arrive via Ander and get triaged
+case by case (e.g. the `Waker::noop()` cleanup that surfaced with the relay
+landing). If the sandbox's pinned version ever changes, update this note.
+
 ## Where to read next
 
 `ARCHITECTURE.md` for the system itself (start with the glossary — the
